@@ -30,6 +30,8 @@ export interface Paper {
   domain?: string
   totalResults?: number
   relevanceScore?: number
+  // Ids of merged versions, e.g. the arXiv preprint
+  versions?: string[]
 }
 
 export interface SearchFilters {
