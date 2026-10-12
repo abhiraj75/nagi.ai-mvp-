@@ -1,6 +1,6 @@
-// dup@10 and nDCG@10, before vs. after dedup. Needs OPENALEX_API_KEY.
+// dup@10, nDCG@10 and false merges, before vs. after dedup. Needs OPENALEX_API_KEY.
 //   npm run eval:search
-//   npm run eval:search -- --pool   unlabeled top-10 results, for labeling
+//   npm run eval:search -- --pool   unlabeled top-10 results and unverified merges, for labeling
 // Labels: grades { id: 0|1|2 }, same [[ids of one work]]. Unlabeled = 0.
 import { readFileSync } from 'node:fs';
 import { fetchRankedPapers, dedupeVersions } from '../src/lib/providers/openalex.ts';
@@ -28,12 +28,27 @@ function score(list, { grades, same }) {
   return { dup: dups / Math.min(K, list.length || 1), ndcg: idcg ? dcg / idcg : 0, unjudged };
 }
 
+// A merge is false if both ids are labeled but not in one `same` group
+function checkMerges(deduped, { grades, same }) {
+  const labeled = id => id in grades || same.some(g => g.includes(id));
+  const confirmed = [], falseMerges = [], unverified = [];
+  for (const p of deduped) {
+    for (const v of p.versions || []) {
+      const ok = same.some(g => g.includes(p.id) && g.includes(v));
+      (ok ? confirmed : labeled(p.id) && labeled(v) ? falseMerges : unverified).push([p.id, v]);
+    }
+  }
+  return { confirmed, falseMerges, unverified };
+}
+
 const rows = [];
 const pool = [];
 for (const q of queries) {
   const { papers } = await fetchRankedPapers(q.query);
   const before = papers.slice(0, 20);
-  const after = dedupeVersions(papers).slice(0, 20);
+  const deduped = dedupeVersions(papers);
+  const after = deduped.slice(0, 20);
+  const merges = checkMerges(deduped, q);
 
   if (poolMode) {
     const ids = new Set();
@@ -45,20 +60,26 @@ for (const q of queries) {
         venue: p.journal, authors: p.authors.slice(0, 3), abstract: p.abstract.slice(0, 400),
       });
     }
+    const title = id => papers.find(p => p.id === id)?.title;
+    for (const pair of merges.unverified) pool.push({ query: q.query, merge: pair, titles: pair.map(title) });
     continue;
   }
-  rows.push({ query: q.query, before: score(before, q), after: score(after, q) });
+  for (const [a, b] of merges.falseMerges) console.error(`FALSE MERGE  ${q.query}: ${a} + ${b}`);
+  rows.push({ query: q.query, before: score(before, q), after: score(after, q), merges });
 }
 
 if (poolMode) {
   console.log(JSON.stringify(pool, null, 2));
 } else {
   const f = n => n.toFixed(3);
+  const total = k => rows.reduce((s, r) => s + r.merges[k].length, 0);
   const mean = (key, m) => rows.reduce((s, r) => s + r[key][m], 0) / rows.length;
-  console.log(['query'.padEnd(50), 'dup@10 before', 'after', 'nDCG@10 before', 'after', 'unjudged'].join('\t'));
+  console.log(['query'.padEnd(50), 'dup@10 before', 'after', 'nDCG@10 before', 'after', 'unjudged', 'false merges'].join('\t'));
   for (const r of rows) {
-    console.log([r.query.slice(0, 50).padEnd(50), f(r.before.dup), f(r.after.dup), f(r.before.ndcg), f(r.after.ndcg), r.after.unjudged].join('\t'));
+    console.log([r.query.slice(0, 50).padEnd(50), f(r.before.dup), f(r.after.dup), f(r.before.ndcg), f(r.after.ndcg), r.after.unjudged, r.merges.falseMerges.length].join('\t'));
   }
   console.log(['MEAN'.padEnd(50), f(mean('before', 'dup')), f(mean('after', 'dup')), f(mean('before', 'ndcg')), f(mean('after', 'ndcg')),
-    rows.reduce((s, r) => s + r.after.unjudged, 0)].join('\t'));
+    rows.reduce((s, r) => s + r.after.unjudged, 0), total('falseMerges')].join('\t'));
+  console.log(`merges: ${total('confirmed')} confirmed, ${total('falseMerges')} false, ${total('unverified')} unverified`);
+  if (total('falseMerges')) process.exitCode = 1;
 }

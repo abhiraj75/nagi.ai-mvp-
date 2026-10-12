@@ -1,7 +1,7 @@
 // node --test scripts/dedupe.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { dedupeVersions } from '../src/lib/providers/openalex.ts';
+import { dedupeVersions, arxivIdOf } from '../src/lib/providers/openalex.ts';
 
 const paper = (id, title, authors, extra = {}) => ({ id, title, authors, citationCount: 0, ...extra });
 
@@ -45,4 +45,27 @@ test('non-Latin titles and names are not collapsed to empty keys', () => {
     paper('W3', '深度学习综述', ['李娜']),
   ]);
   assert.equal(out.length, 3);
+});
+
+test('shared arXiv ID merges even when the title changed', () => {
+  const out = dedupeVersions([
+    paper('W1', 'RocketQA: An Optimized Training Approach to Dense Passage Retrieval', ['Yingqi Qu'], { type: 'preprint', arxivId: '2010.08191' }),
+    paper('W2', 'RocketQA: Optimized Dense Passage Retrieval for Open-Domain QA', ['Yingqi Qu'], { arxivId: '2010.08191', citationCount: 9 }),
+  ]);
+  assert.deepEqual(out.map(p => p.id), ['W2']);
+});
+
+test('same title and author but different arXiv IDs: not merged', () => {
+  const out = dedupeVersions([
+    paper('W1', 'Lecture Notes on Deep Learning', ['Jane Smith'], { arxivId: '2101.00001' }),
+    paper('W2', 'Lecture Notes on Deep Learning', ['Jane Smith'], { arxivId: '2205.00002' }),
+  ]);
+  assert.equal(out.length, 2);
+});
+
+test('arxivIdOf reads DOIs and arxiv.org URLs', () => {
+  assert.equal(arxivIdOf('https://doi.org/10.48550/arxiv.2107.03760'), '2107.03760');
+  assert.equal(arxivIdOf('https://arxiv.org/pdf/2004.04906v3.pdf'), '2004.04906');
+  assert.equal(arxivIdOf('http://arxiv.org/abs/hep-th/9901001'), 'hep-th/9901001');
+  assert.equal(arxivIdOf('https://aclanthology.org/2021.eval4nlp-1.20.pdf'), undefined);
 });

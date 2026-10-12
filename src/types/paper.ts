@@ -15,6 +15,7 @@ export interface Paper {
   publicationYear: number
   citationCount: number
   doi?: string
+  arxivId?: string
   journal?: string
   openAlexId: string
   pdfUrl?: string
